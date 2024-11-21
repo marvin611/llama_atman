@@ -20,8 +20,7 @@ pip install -r requirements.txt
 4. Set up Streamlit secrets:
 ```bash
 mkdir .streamlit
-cp .streamlit/secrets.toml.example .streamlit/secrets.toml
-# Edit secrets.toml with your API keys
+touch .streamlit/secrets.toml
 ```
 
 ## Configuration
