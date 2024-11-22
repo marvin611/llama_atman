@@ -7,58 +7,25 @@ from rag import RAG, RAGResult
 import torch
 import asyncio
 from llama import Llama
+import time
 
 
 # Initialize basic session state
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "current_model" not in st.session_state:
-    st.session_state.current_model = "TinyLlama-1.1B"  # Set default model
-if "model_handler" not in st.session_state:
-    st.session_state.model_handler = None
-if "rag" not in st.session_state:
-    st.session_state.rag = None
-if 'show_test_results' not in st.session_state:
-    st.session_state.show_test_results = False
+DEFAULT_SESSION_STATE = {
+    "messages": [],
+    "current_model": "TinyLlama-1.1B",
+    "model_handler": None,
+    "rag": None,
+    "show_test_results": False
+}
+
+for key, value in DEFAULT_SESSION_STATE.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 st.title("RAG Chatbot with Explanations")
 
 
-# Run comparison tests
-def run_comparison_tests():
-    """Run comparison tests between basic generation and RAG+explanations"""
-    st.markdown("## Automated Tests")
-    
-    with st.spinner("Running tests..."):
-        from tests.test_generation import test_basic_generation
-        from tests.test_rag_explanations import test_rag_with_explanations
-        from tests.conftest import TEST_CASES
-        
-        # Run both test sets
-        basic_results = test_basic_generation(TEST_CASES)
-        rag_results = test_rag_with_explanations(TEST_CASES)
-        
-        # Display results
-        for basic, rag in zip(basic_results, rag_results):
-            st.markdown(f"### Test: {basic.prompt}")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("#### Basic Generation")
-                st.markdown(f"**Response:**\n{basic.response}")
-                st.markdown(f"Time: {basic.execution_time:.2f}s")
-            
-            with col2:
-                st.markdown("#### RAG + Explanations")
-                st.markdown(f"**Response:**\n{rag.response}")
-                if rag.explanations:
-                    st.markdown("**Relevant Context:**")
-                    for i, exp in enumerate(rag.explanations, 1):
-                        st.markdown(f"{i}. {exp}")
-                st.markdown(f"Time: {rag.execution_time:.2f}s")
-            
-            st.markdown("---")
 
 # Sidebar controls
 with st.sidebar:
@@ -86,10 +53,15 @@ with st.sidebar:
     )
     
     # Show download status
-    if selected_model in downloaded_models:
-        st.success(f"Model {selected_model} is already downloaded")
-    else:
-        st.info(f"Model {selected_model} will be downloaded when selected")
+    status_placeholder = st.empty()
+    with status_placeholder.container():
+        if selected_model in downloaded_models:
+            st.success(f"Model {selected_model} is already downloaded")
+        else:
+            st.info(f"Model {selected_model} will be downloaded when selected")
+        # Make status message disappear after 3 seconds
+        time.sleep(3)
+    status_placeholder.empty()
     
     # Model parameters
     temperature = st.slider("Temperature", 0.0, 1.0, 0.7)
@@ -105,30 +77,35 @@ with st.sidebar:
 
 # Handle model initialization/switching
 if (st.session_state.current_model != selected_model) or (st.session_state.model_handler is None):
-    with st.spinner(f"Loading model {selected_model}..."):
-        # Initialize model handler
-        model_handler = Llama(
-            model_name=selected_model,
-            device='cuda' if torch.cuda.is_available() else 'cpu'
-        )
-        if not model_handler.setup():
-            st.error("Failed to set up model")
-            st.stop()
-        
-        # Initialize RAG with the model handler
-        bing_key = st.secrets.get("BING_SUBSCRIPTION_KEY", None)
-        rag = RAG(
-            model_handler=model_handler,  # Pass the model handler directly
-            device='cuda' if torch.cuda.is_available() else 'cpu',
-            web_search_enabled=bool(bing_key),
-            bing_subscription_key=bing_key
-        )
-        
-        # Update session state
-        st.session_state.model_handler = model_handler
-        st.session_state.rag = rag
-        st.session_state.current_model = selected_model
-        st.success(f"Model {selected_model} loaded successfully!")
+    status_placeholder = st.empty()
+    with status_placeholder.container():
+        with st.spinner(f"Loading model {selected_model}..."):
+            # Initialize model handler
+            model_handler = Llama(
+                model_name=selected_model,
+                device='cuda' if torch.cuda.is_available() else 'cpu'
+            )
+            if not model_handler.setup():
+                st.error("Failed to set up model")
+                st.stop()
+            
+            # Initialize RAG with the model handler
+            bing_key = st.secrets.get("BING_SUBSCRIPTION_KEY", None)
+            rag = RAG(
+                model_handler=model_handler,  # Pass the model handler directly
+                device='cuda' if torch.cuda.is_available() else 'cpu',
+                web_search_enabled=bool(bing_key),
+                bing_subscription_key=bing_key
+            )
+            
+            # Update session state
+            st.session_state.model_handler = model_handler
+            st.session_state.rag = rag
+            st.session_state.current_model = selected_model
+            st.success(f"Model {selected_model} loaded successfully!")
+    # Make message disappear after 3 seconds
+    time.sleep(3)
+    status_placeholder.empty()
 
 # Add a warning if Bing key is not available
 if enable_web_search and not st.session_state.rag.bing_subscription_key:
@@ -221,7 +198,7 @@ def get_delimiters_for_mode(mode: str) -> List[str]:
         List of delimiter strings
     """
     if mode == "word":
-        return [" "]
+        return ["word"]
     elif mode == "sentence":
         return [".", "!", "?"]
     else:  # paragraph
