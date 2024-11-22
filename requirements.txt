@@ -16,3 +16,4 @@ fastembed
 numpy
 matplotlib
 json
+pytest-asyncio
