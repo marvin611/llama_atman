@@ -1,5 +1,6 @@
 from typing import Callable, List
 import numpy as np
+import re
 
 
 def split_list_based_on_indices(list_to_split, split_indices):
@@ -36,52 +37,49 @@ def search_multi_token_delimiter(token_ids, delimiter):
 
 class SentenceWiseSuppression:
     def __init__(self, prompt: str, delimiters: List[str], tokenizer_encode_fn: Callable, tokenizer_decode_fn: Callable):
-        """
-        Provides config for suppressing a prompt one sentence at a time.
-        The delimiters can be used to specify how a sentence ends, 
-        like ["\n", ".", "?", "!"]
-        """
-        assert isinstance(prompt, str)
-        assert isinstance(delimiters, list)
-
         self.tokenizer_encode_fn = tokenizer_encode_fn
         self.tokenizer_decode_fn = tokenizer_decode_fn
-        self.delimiters = delimiters
+        
+        # Choose chunking method based on delimiter
+        if delimiters == ["word"]:
+            text_chunks = self._split_by_words(prompt)
+        else:
+            text_chunks = self._split_by_delimiters(prompt, delimiters)
+        
+        # Process chunks into tokens
+        self.chunk_token_ids = []
+        current_position = 0
+        self.chunk_indices = []
+        
+        for chunk in text_chunks:
+            chunk_tokens = self.tokenizer_encode_fn(chunk, add_special_tokens=False)
+            chunk_range = list(range(current_position, current_position + len(chunk_tokens)))
+            self.chunk_indices.append(chunk_range)
+            current_position += len(chunk_tokens)
+            self.chunk_token_ids.append(chunk_tokens)
 
-        # Split text using multiple delimiters
-        text_chunks = [prompt]
+        # Flatten token IDs
+        self.prompt_token_ids = [t for chunk in self.chunk_token_ids for t in chunk]
+
+        print(f"Split into {len(text_chunks)} chunks")
+        print(f"First few chunks: {text_chunks[:3]}")
+
+    def _split_by_words(self, text: str) -> List[str]:
+        """Split text into words."""
+        return re.findall(r'\S+', text)
+
+    def _split_by_delimiters(self, text: str, delimiters: List[str]) -> List[str]:
+        """Split text using the provided delimiters."""
+        text_chunks = [text]
         for delimiter in delimiters:
-            # Split all current chunks using this delimiter
             new_chunks = []
             for chunk in text_chunks:
                 new_chunks.extend(chunk.split(delimiter))
             text_chunks = new_chunks
 
         # Remove empty chunks and whitespace
-        text_chunks = [chunk.strip() for chunk in text_chunks if chunk.strip()]
-        
-        self.chunk_token_ids = []
-        current_position = 0
-        self.chunk_indices = []
-        
-        for i, chunk in enumerate(text_chunks):
-            # Add a period as default delimiter (could be configurable)
-            chunk_text = chunk + "." if i < len(text_chunks)-1 else chunk
-            chunk_tokens = self.tokenizer_encode_fn(chunk_text, add_special_tokens=False)
-            
-            # Store token indices for this chunk
-            chunk_range = list(range(current_position, current_position + len(chunk_tokens)))
-            self.chunk_indices.append(chunk_range)
-            current_position += len(chunk_tokens)
-            
-            self.chunk_token_ids.append(chunk_tokens)
+        return [chunk.strip() for chunk in text_chunks if chunk.strip()]
 
-        # Flatten token IDs for full prompt
-        self.prompt_token_ids = [t for chunk in self.chunk_token_ids for t in chunk]
-
-        print(f"Split into {len(text_chunks)} chunks")
-        print(f"First few chunks: {text_chunks[:3]}")
-        
     def get_split_prompt(self):
         return [self.tokenizer_decode_fn(chunk) for chunk in self.chunk_token_ids]
             
