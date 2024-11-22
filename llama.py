@@ -270,21 +270,3 @@ class Llama:
             
         except Exception as e:
             raise Exception(f"Error during generation: {e}")
-
-if __name__ == "__main__":
-    # Initialize model
-    model = Llama(model_name="TinyLlama-1.1B", device='cpu')
-    
-    # Set up model (downloads files, loads model and tokenizer)
-    model.setup()
-    
-    # Test generation
-    prompt = "What is the capital of France?"
-    response = model.generate(
-        prompt,
-        max_new_tokens=128,
-        temperature=0.7,
-        do_sample=True
-    )
-    print(f"\nTesting generation:\nPrompt: {prompt}")
-    print("Response:", response)
