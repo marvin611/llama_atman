@@ -8,7 +8,36 @@ import torch
 import asyncio
 from llama import Llama
 import time
+import re
 
+
+# Initialize example prompts
+example_prompts = [
+    {
+        "text": "Who is the current leader of Germany?",
+        "seed": 44,
+        "temperature": 0.7,
+        "max_tokens": 256
+    },
+    {
+        "text": "What is the latest release of Meta's Llama 3?",
+        "seed": 789,
+        "temperature": 0.7,
+        "max_tokens": 256
+    },
+    {
+        "text": "Who won the latest presidential election in the US?",
+        "seed": 123,
+        "temperature": 0.7,
+        "max_tokens": 256
+    },
+    {
+        "text": "What will the weather be like in Tokyo tomorrow?",
+        "seed": 456,
+        "temperature": 0.7,
+        "max_tokens": 256
+    }
+]
 
 # Initialize basic session state
 DEFAULT_SESSION_STATE = {
@@ -16,7 +45,7 @@ DEFAULT_SESSION_STATE = {
     "current_model": "TinyLlama-1.1B",
     "model_handler": None,
     "rag": None,
-    "show_test_results": False
+    "selected_sources": []
 }
 
 for key, value in DEFAULT_SESSION_STATE.items():
@@ -24,7 +53,7 @@ for key, value in DEFAULT_SESSION_STATE.items():
         st.session_state[key] = value
 
 st.title("RAG Chatbot with Explanations")
-
+st.divider()
 
 
 # Sidebar controls
@@ -33,14 +62,8 @@ with st.sidebar:
     enable_web_search = st.toggle("Enable Web Search", value=True)
     top_k_web = st.slider("Web Results", 0, 5, 2)
     
-    st.markdown("### Explanation Configuration")
-    enable_explanations = st.toggle("Enable Explanations", value=True)
-    chunk_mode = st.selectbox(
-        "Chunk Mode",
-        ["word", "sentence", "paragraph"],
-        index=1
-    )
-    
+    st.divider()
+
     st.markdown("### Model Configuration")
     available_models = Llama.list_available_models()
     downloaded_models = Llama.list_downloaded_models()
@@ -67,45 +90,73 @@ with st.sidebar:
     temperature = st.slider("Temperature", 0.0, 1.0, 0.7)
     max_new_tokens = st.slider("Max New Tokens", 64, 1024, 256)
     seed = st.number_input("Seed", min_value=0, max_value=1000000, value=42)
-
-    # Add separator before test section
-    st.markdown("---")
-    st.markdown("### Test Section")
     
-    if st.button("Run Comparison Tests", use_container_width=True):
-        st.session_state.show_test_results = True
+    st.divider()
+
+    st.markdown("### Explanation Configuration")
+    enable_explanations = st.toggle("Enable Explanations", value=True)
+    
+    input_chunk_mode = st.selectbox(
+        "Input Chunk Mode (Selection)",
+        ["word", "sentence", "paragraph"],
+        index=1,
+        help="How to split the assistant's response for selection"
+    )
+    
+    output_chunk_mode = st.selectbox(
+        "Output Chunk Mode (Explanation)",
+        ["word", "sentence", "paragraph"],
+        index=1,
+        help="How to analyze the context for explanations"
+    )
+    
+    num_chunks = st.slider(
+        "Number of Explanation Chunks",
+        min_value=1,
+        max_value=5,
+        value=2,
+        help="Number of relevant chunks to highlight in the context"
+    )
+
 
 # Handle model initialization/switching
 if (st.session_state.current_model != selected_model) or (st.session_state.model_handler is None):
     status_placeholder = st.empty()
     with status_placeholder.container():
-        with st.spinner(f"Loading model {selected_model}..."):
-            # Initialize model handler
-            model_handler = Llama(
-                model_name=selected_model,
-                device='cuda' if torch.cuda.is_available() else 'cpu'
-            )
-            if not model_handler.setup():
-                st.error("Failed to set up model")
-                st.stop()
-            
-            # Initialize RAG with the model handler
-            bing_key = st.secrets.get("BING_SUBSCRIPTION_KEY", None)
-            rag = RAG(
-                model_handler=model_handler,  # Pass the model handler directly
-                device='cuda' if torch.cuda.is_available() else 'cpu',
-                web_search_enabled=bool(bing_key),
-                bing_subscription_key=bing_key
-            )
-            
-            # Update session state
-            st.session_state.model_handler = model_handler
-            st.session_state.rag = rag
-            st.session_state.current_model = selected_model
-            st.success(f"Model {selected_model} loaded successfully!")
-    # Make message disappear after 3 seconds
-    time.sleep(3)
-    status_placeholder.empty()
+        if selected_model in downloaded_models:
+            st.success(f"Model {selected_model} is already downloaded")
+        else:
+            st.info(f"Model {selected_model} will be downloaded when selected")
+    
+    with st.spinner(f"Loading model {selected_model}..."):
+        # Initialize model handler
+        model_handler = Llama(
+            model_name=selected_model,
+            device='cuda' if torch.cuda.is_available() else 'cpu'
+        )
+        if not model_handler.setup():
+            st.error("Failed to set up model")
+            st.stop()
+        
+        # Initialize RAG with the model handler
+        bing_key = st.secrets.get("BING_SUBSCRIPTION_KEY", None)
+        rag = RAG(
+            model_handler=model_handler,
+            device='cuda' if torch.cuda.is_available() else 'cpu',
+            web_search_enabled=bool(bing_key),
+            bing_subscription_key=bing_key
+        )
+        
+        # Update session state
+        st.session_state.model_handler = model_handler
+        st.session_state.rag = rag
+        st.session_state.current_model = selected_model
+        
+        success_placeholder = st.empty()
+        success_placeholder.success(f"Model {selected_model} loaded successfully!")
+        # Clear both status messages after a moment
+        status_placeholder.empty()
+        success_placeholder.empty()
 
 # Add a warning if Bing key is not available
 if enable_web_search and not st.session_state.rag.bing_subscription_key:
@@ -135,8 +186,8 @@ def create_annotated_text(text: str, highlight_chunks: List[str]) -> List[tuple]
             parts = remaining_text.split(chunk, 1)
             if parts[0]:  # Add text before chunk
                 annotated.append(parts[0])
-            # Add highlighted chunk with label
-            annotated.append((chunk, "#faa"))
+            # None for label, rgba for color
+            annotated.append((chunk, None, "rgba(90, 35, 170, 1)"))
             remaining_text = parts[1]
         else:
             sorted_chunks.pop(0)
@@ -148,16 +199,7 @@ def create_annotated_text(text: str, highlight_chunks: List[str]) -> List[tuple]
 
 
 def create_clickable_text(text: str, chunk_mode: str = "word") -> str:
-    """
-    Create clickable text format based on chunk mode
-    Args:
-        text: The text to make clickable
-        chunk_mode: "word" or "sentence" or "paragraph"
-    Returns:
-        HTML formatted string with clickable elements
-    """
     if chunk_mode == "sentence":
-        # More robust sentence splitting
         sentences = []
         current = ""
         for char in text:
@@ -165,27 +207,27 @@ def create_clickable_text(text: str, chunk_mode: str = "word") -> str:
             if char in '.!?' and len(current.strip()) > 0:
                 sentences.append(current.strip())
                 current = ""
-        if current.strip():  # Add any remaining text
+        if current.strip():
             sentences.append(current.strip())
             
         clickable_elements = []
         for i, sentence in enumerate(sentences):
             if sentence:
                 clickable_elements.append(
-                    f'<a href="#" id="sentence_{i}" style="color: inherit; cursor: pointer; transition: all 0.2s ease;">{sentence}</a>'
+                    f'<a href="#" id="sentence_{i}" style="color: white;">{sentence}</a>'
                 )
         
-        return f'<div style="line-height: 1.5">{" ".join(clickable_elements)}</div>'
+        return " ".join(clickable_elements)
     
     else:  # word mode
         words = text.split()
         clickable_words = []
         for i, word in enumerate(words):
             clickable_words.append(
-                f'<a href="#" id="word_{i}" style="color: inherit; cursor: pointer; transition: all 0.2s ease;">{word}</a>'
+                f'<a href="#" id="word_{i}" style="color: white;">{word}</a>'
             )
         
-        return f'<div style="line-height: 1.5">{" ".join(clickable_words)}</div>'
+        return " ".join(clickable_words)
 
 
 # When initializing the explainer, set the delimiter based on chunk_mode
@@ -207,154 +249,216 @@ def get_delimiters_for_mode(mode: str) -> List[str]:
 
 def handle_click_and_explanations(clicked_text: str, context: str, model_handler):
     """Handle click events and generate explanations for selected text"""
-    if clicked_text:
-        with st.spinner("Analyzing selected text..."):
-            # Get delimiters based on chunk mode
-            delimiters = get_delimiters_for_mode(chunk_mode)
-            # Initialize explainer with context
-            explainer = DocumentQAExplainer(
-                model=model_handler,
-                document=context,
-                explanation_delimiters=delimiters,
-                device='cuda' if torch.cuda.is_available() else 'cpu',
-                suppression_factor=0.5
-            )
-            
-            # Run explainer on selected text
-            output = explainer.run(
-                question="Why is this part of the response relevant?",
-                expected_answer=clicked_text
-            )
-            
-            if output:
-                # Get the two most relevant chunks
-                postprocessed = explainer.postprocess(output)
-                relevant_chunks = [chunk['chunk'] for chunk in sorted(
-                    postprocessed.data, 
-                    key=lambda x: x['value'], 
-                    reverse=True
-                )[:2]]
-                
-                # Display annotated context
-                st.markdown("#### Context Analysis:")
-                annotated_chunks = create_annotated_text(context, relevant_chunks)
-                annotated_text(*annotated_chunks)
-            else:
-                st.warning("Could not generate explanations for the selected text.")
+    if not clicked_text:
+        return None
+        
+    # Get delimiters based on output chunk mode
+    delimiters = get_delimiters_for_mode(output_chunk_mode)
+    # Initialize explainer with context
+    explainer = DocumentQAExplainer(
+        model=model_handler,
+        document=context,
+        explanation_delimiters=delimiters,
+        device='cuda' if torch.cuda.is_available() else 'cpu',
+        suppression_factor=0.0
+    )
+    
+    # Run explainer on selected text
+    output = explainer.run(
+        question="Why is this part of the response relevant?",
+        expected_answer=clicked_text
+    )
+    
+    if output:
+        # Get the specified number of most relevant chunks
+        postprocessed = explainer.postprocess(output)
+        relevant_chunks = [chunk['chunk'] for chunk in sorted(
+            postprocessed.data, 
+            key=lambda x: x['value'], 
+            reverse=True
+        )[:num_chunks]]
+        
+        return relevant_chunks
+    return None
 
+
+# Helper function to clean text
+def clean_text(text: str) -> str:
+    """Remove HTML tags and clean up text"""
+    # Remove HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    # Replace multiple spaces with single space
+    text = re.sub(r'\s+', ' ', text)
+    # Replace &amp; with &
+    text = text.replace('&amp;', '&')
+    return text.strip()
+
+
+def perform_rag_operation(query: str, top_k: int, web_only: bool, seed: int, temperature: float, max_tokens: int) -> tuple:
+    """Perform RAG retrieval and response generation"""
+    print("\n=== Starting Web Search ===")
+    result = st.session_state.rag.retrieve_context(
+        query=query,
+        top_k=top_k,
+        web_only=web_only
+    )
+    print(f"Found {len(result.contexts)} sources")
+    
+    # Clean the contexts
+    cleaned_contexts = [clean_text(ctx) for ctx in result.contexts]
+    context_text = "\n\n".join(cleaned_contexts) if cleaned_contexts else None
+    
+    print("\n=== Generating Response ===")
+    print("Query:", query)
+    print("Context length:", len(context_text) if context_text else 0)
+    response = st.session_state.rag.generate_response(
+        query=query,
+        context=context_text,
+        seed=seed,
+        temperature=temperature,
+        max_new_tokens=max_tokens
+    )
+    print("Response generated successfully")
+    
+    return response, context_text, result.sources
 
 
 # Chat input and response generation
-if prompt := st.chat_input("What would you like to know?"):
+prompt = st.chat_input("What would you like to know?")
+
+# Check for example prompt buttons
+col1, col2 = st.columns(2)
+with col1:
+    for example in [example_prompts[0], example_prompts[2]]:
+        if st.button(
+            example["text"],
+            use_container_width=True,
+            type="secondary",
+            key=f"example_button_{example['text'][:20]}"
+        ):
+            prompt = example["text"]
+            seed = example["seed"]
+            temperature = example["temperature"]
+            max_new_tokens = example["max_tokens"]
+
+with col2:
+    for example in [example_prompts[1], example_prompts[3]]:
+        if st.button(
+            example["text"],
+            use_container_width=True,
+            type="secondary",
+            key=f"example_button_{example['text'][:20]}"
+        ):
+            prompt = example["text"]
+            seed = example["seed"]
+            temperature = example["temperature"]
+            max_new_tokens = example["max_tokens"]
+
+
+# Add a note about RAG and explanations status
+if any(msg["role"] == "user" and msg["content"] in [p["text"] for p in example_prompts] for msg in st.session_state.messages):
+    st.info(
+        "💡 Try toggling RAG (web search) and explanations in the sidebar to see how "
+        "the responses change with different settings!"
+    )
+
+# Handle any prompt (typed or from example)
+if prompt:
     # Add user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     
-    # Get context from RAG (but don't display it)
-    result = st.session_state.rag.retrieve_context(
+    # Display user message and spinner in chat flow
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.write(message["content"])
+    
+ 
+    response, context, sources = perform_rag_operation(
         query=prompt,
         top_k=top_k_web,
-        web_only=enable_web_search
-    )
-    
-    # Generate response
-    response = st.session_state.rag.generate_response(
-        query=prompt,
-        context="\n\n".join(result.contexts) if result.contexts else None,
+        web_only=enable_web_search,
         seed=seed,
         temperature=temperature,
-        max_new_tokens=max_new_tokens
+        max_tokens=max_new_tokens
     )
     
-    # Add assistant message with context stored but not displayed
+    # Add assistant message
     st.session_state.messages.append({
         "role": "assistant",
         "content": response,
-        "context": "\n\n".join(result.contexts) if result.contexts else None
+        "context": context,
+        "sources": sources
     })
 
-    # Optional: Display context viewer
-    if result.contexts:  # Only show expander if there's context to display
-        with st.expander("View Retrieved Context"):
-            for ctx, src, score in zip(result.contexts, result.sources, result.relevance_scores):
-                with st.container():
-                    # Source header with score
-                    st.markdown(f"**Source ({score:.3f}):**")
-                    
-                    # Source metadata
-                    if src['type'] == 'web':
-                        st.markdown(f"Type: Web\nURL: {src['metadata'].get('url', 'N/A')}")
-                    else:
-                        st.markdown(f"Type: {src['type']}")
-                    
-                    # Source content in a distinct box
-                    st.markdown("**Content:**")
-                    st.markdown(f"```\n{ctx}\n```")
-                    st.divider()
-
 # Display chat history
-for message in st.session_state.messages:
+for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         if message["role"] == "assistant":
-            # Add clickable version for explanations if enabled
             if enable_explanations:
                 clicked = click_detector(
-                    create_clickable_text(message["content"], chunk_mode)
+                    create_clickable_text(message["content"], input_chunk_mode),
+                    key=f"clickable_{idx}"
                 )
+            else:
+                st.write(message["content"])
+            
+            # Display context right after the assistant's message if it exists
+            if message.get("context"):
+                contexts = message["context"].split("\n\n")
+                sources = message.get("sources", [])
                 
-                # Show explanations if text is clicked and context exists
-                if clicked and message.get("context"):
-                    handle_click_and_explanations(
-                        clicked_text=clicked,
-                        context=message["context"],
-                        model_handler=st.session_state.rag.llm
-                    )
+                # Initialize selected_sources if needed
+                if len(st.session_state.selected_sources) != len(contexts):
+                    st.session_state.selected_sources = [True] * len(contexts)
+                
+                cols = st.columns(min(len(contexts), top_k_web))
+                
+                for src_idx, (ctx, source, col) in enumerate(zip(contexts, sources, cols)):
+                    with col:
+                        # Get metadata from source
+                        title = source.get("metadata", {}).get("title", f"Source {src_idx + 1}")
+                        url = source.get("metadata", {}).get("url", None)
+                        domain = source.get("metadata", {}).get("domain", None)
+                        
+                        # Collapsible container for each source
+                        with st.expander(title, expanded=True):
+                            # Add checkbox inside expander
+                            st.session_state.selected_sources[src_idx] = st.checkbox(
+                                f"Explain",
+                                value=st.session_state.selected_sources[src_idx],
+                                key=f"source_checkbox_{idx}_{src_idx}"  # Include message idx in key
+                            )
+                            
+                            if domain:
+                                st.caption(f"From: {domain}")
+                            if url:
+                                st.markdown(f"[🔗 Source Link]({url})")
+                            st.divider()
+                            
+                            # Display the content with explanations if enabled
+                            if enable_explanations and clicked and st.session_state.selected_sources[src_idx]:
+                                with st.spinner("🔍 Analyzing context..."):
+                                    print(f"\n=== Running Explanation for Source {src_idx + 1} ===")
+                                    print("Clicked Text:", clicked)
+                                    print("Context length:", len(ctx))
+                                    
+                                    relevant_chunks = handle_click_and_explanations(
+                                        clicked_text=clicked,
+                                        context=ctx,
+                                        model_handler=st.session_state.rag.llm
+                                    )
+                                    
+                                    print("Found relevant chunks:", len(relevant_chunks) if relevant_chunks else 0)
+                                    print("Relevant Chunks:", relevant_chunks)
+                                    print("=" * 50)
+                                
+                                if relevant_chunks:
+                                    annotated_chunks = create_annotated_text(ctx, relevant_chunks)
+                                    annotated_text(*annotated_chunks)
+                                else:
+                                    st.markdown(ctx)
+                            else:
+                                st.markdown(ctx)
         else:
-            # Display user messages normally
-            st.markdown(message["content"])
+            st.write(message["content"])
 
-if st.session_state.show_test_results:
-    st.markdown("## Test Results")
-    with st.spinner("Running tests..."):
-        from tests.test_generation import test_basic_generation
-        from tests.test_rag_explanations import test_rag_with_explanations
-        from tests.conftest import TEST_CASES
-        
-        progress_text = st.empty()
-        
-        # Run tests with progress updates
-        progress_text.text("Running basic generation tests...")
-        basic_results = test_basic_generation(TEST_CASES)
-        
-        progress_text.text("Running RAG + explanations tests...")
-        rag_results = test_rag_with_explanations(TEST_CASES)
-        
-        progress_text.empty()
-        
-        # Display results
-        for basic, rag in zip(basic_results, rag_results):
-            st.markdown(f"### Test: {basic.prompt}")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("#### Basic Generation")
-                st.markdown(f"**Response:**\n{basic.response}")
-                st.markdown(f"Time: {basic.execution_time:.2f}s")
-            
-            with col2:
-                st.markdown("#### RAG + Explanations")
-                st.markdown(f"**Response:**\n{rag.response}")
-                if rag.explanations:
-                    st.markdown("**Relevant Context:**")
-                    for i, exp in enumerate(rag.explanations, 1):
-                        st.markdown(f"{i}. {exp}")
-                st.markdown(f"Time: {rag.execution_time:.2f}s")
-                
-                # Show context in expander if available
-                if rag.context:
-                    with st.expander("View Context"):
-                        st.markdown(rag.context)
-            
-            st.markdown("---")
-    
-    # Reset flag after displaying
-    st.session_state.show_test_results = False
