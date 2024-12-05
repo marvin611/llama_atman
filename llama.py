@@ -137,19 +137,29 @@ class Llama:
 
     def preprocess_inputs(self, input_list: Union[str, List[str]], embed: bool = True) -> Union[torch.Tensor, List[torch.Tensor]]:
         """
-        Preprocess text inputs for the Llama model.
+        Preprocesses text inputs for the Llama model. This method can handle both single string inputs and lists of strings.
+        It tokenizes the inputs, applies padding and truncation, and optionally embeds the tokenized inputs.
+
+        Args:
+            input_list (Union[str, List[str]]): The input text(s) to be preprocessed. Can be a single string or a list of strings.
+            embed (bool, optional): If True, the method will embed the tokenized inputs. Defaults to True.
+
+        Returns:
+            Union[torch.Tensor, List[torch.Tensor]]: The preprocessed inputs. If `embed` is True, returns the embedded tensors. Otherwise, returns the tensor of token IDs.
         """
-        # Handle single string input
+        # Convert single string input to a list for consistency
         if isinstance(input_list, str):
             input_list = [input_list]
             
-        # Convert to list for processing
+        # Deep copy the input list to ensure original data is not modified
         input_list = copy.deepcopy(input_list)
         processed_inputs = []
         
+        # Iterate over each input in the list
         for i, inp in enumerate(input_list):
+            # Check if the input is a string
             if isinstance(inp, str):
-                # Tokenize the input
+                # Tokenize the input string
                 tokens = self.tokenizer(
                     inp,
                     return_tensors="pt",
@@ -159,14 +169,16 @@ class Llama:
                 ).input_ids
                 processed_inputs.append(tokens)
             else:
+                # Raise an error if the input is not a string
                 raise ValueError(f'Invalid input type: {type(inp)}. Only string inputs are supported.')
 
-        # Stack all inputs into a single tensor if multiple inputs
+        # If there are multiple inputs, stack them into a single tensor
         if len(processed_inputs) > 1:
             processed_inputs = torch.cat(processed_inputs, dim=0)
         else:
             processed_inputs = processed_inputs[0]  # This will maintain the 2D shape
 
+        # If embed is True, embed the processed inputs
         if embed:
             return self.embed(processed_inputs)  # Wrap in list for embed method
         
@@ -174,29 +186,38 @@ class Llama:
 
     def embed(self, inputs: List[torch.Tensor]) -> torch.Tensor:
         """
-        Convert tokenized inputs to embeddings.
+        Converts a list of tokenized inputs to their corresponding embeddings.
+
+        This method iterates over each input tensor in the list, ensuring it has a 2D shape (batch_size, sequence_length) by adding a batch dimension if necessary. It then moves each tensor to the device specified by `self.device` and uses the model's embedding layer to convert the tokens to embeddings. If there are multiple inputs, the method concatenates the embeddings along the sequence dimension before returning the result.
+
+        Args:
+            inputs (List[torch.Tensor]): A list of tokenized input tensors to be embedded.
+
+        Returns:
+            torch.Tensor: The embedded tensors, either a single tensor if there's one input or a concatenated tensor if there are multiple inputs.
         """
         embedded_outputs = []
         
         for x in inputs:
+            # Validate input type
             if not isinstance(x, torch.Tensor):
                 raise ValueError(f"Expected torch.Tensor, got {type(x)}")
             
-            # Ensure 2D shape [batch_size, sequence_length]
+            # Ensure input tensor has a 2D shape [batch_size, sequence_length]
             if x.dim() == 1:
                 x = x.unsqueeze(0)  # Add batch dimension if missing
             elif x.dim() != 2:
                 raise ValueError(f"Expected 2D tensor (batch_size, sequence_length), got {x.dim()}D")
                 
-            # Move to correct device
+            # Move input tensor to the device specified by self.device
             x = x.to(self.device)
             
-            # Get embeddings
+            # Convert tokens to embeddings using the model's embedding layer
             with torch.no_grad():
                 embedded = self.model.model.embed_tokens(x)
                 embedded_outputs.append(embedded)
         
-        # Concatenate along sequence dimension if multiple inputs
+        # Concatenate embeddings along the sequence dimension if there are multiple inputs
         if len(embedded_outputs) > 1:
             return torch.cat(embedded_outputs, dim=1)
         return embedded_outputs[0]
@@ -218,7 +239,20 @@ class Llama:
         seed: Optional[int] = None,
         **kwargs
     ) -> str:
-        """Generate text from input."""
+        """
+        Generates text based on the input provided. This method formats the input text for chat or instruction, loads a pre-trained language model, and uses it to generate text. The generated text is then cleaned up by removing the formatting and the original input text if it appears at the start of the response.
+
+        Args:
+            input_text (str): The text to use as input for generation.
+            max_new_tokens (int, optional): The maximum number of tokens to generate. Defaults to 256.
+            temperature (float, optional): The temperature for sampling. Defaults to 0.7.
+            do_sample (bool, optional): Whether to use sampling or greedy decoding. Defaults to True.
+            seed (Optional[int], optional): The seed for reproducibility. Defaults to None.
+            **kwargs: Additional keyword arguments to pass to the model's generate method.
+
+        Returns:
+            str: The generated text response.
+        """
         try:
             if seed is not None:
                 torch.manual_seed(seed)

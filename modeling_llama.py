@@ -17,6 +17,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+"""
+Taken and modified from https://github.com/huggingface/transformers
+"""
+
+
 import math
 from typing import List, Optional, Tuple, Union
 
@@ -270,7 +276,10 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
 
 
 class LlamaAttentionManipulationMixin:
-    """Mixin class for attention manipulation in LLaMA models."""
+    """
+    Mixin for attention manipulation in LLaMA models. This mixin provides a method to manipulate attention weights
+    based on custom masks, allowing for fine-grained control over the attention mechanism.
+    """
     
     def manipulate_attention_weights(
         self,
@@ -279,7 +288,19 @@ class LlamaAttentionManipulationMixin:
         modified_causal_attention_mask: Optional[torch.Tensor],
         manipulate_attn_scores_after_scaling: bool = False,
     ) -> torch.Tensor:
-        """Manipulates attention weights using the same logic as GPT-Neo."""
+        """
+        This method applies custom attention masks to the attention weights, allowing for the modification of attention patterns. 
+        The manipulation can be applied either before or after the softmax scaling of attention scores.
+
+        Args:
+            attention_weights (torch.Tensor): The original attention weights to be manipulated.
+            attention_mask (Optional[torch.Tensor]): The original attention mask.
+            modified_causal_attention_mask (Optional[torch.Tensor]): The custom attention mask to apply.
+            manipulate_attn_scores_after_scaling (bool, optional): Whether to manipulate attention scores after softmax scaling. Defaults to False.
+
+        Returns:
+            torch.Tensor: The manipulated attention weights.
+        """
         if modified_causal_attention_mask is not None:
             attention_weights = manipulate_attention_scores(
                 attention_scores=attention_weights,
@@ -545,7 +566,11 @@ class LlamaSdpaAttention(LlamaAttention, LlamaAttentionManipulationMixin):
     """
     Llama attention module using torch.nn.functional.scaled_dot_product_attention. This module inherits from
     `LlamaAttention` as the weights of the module stays untouched. The only changes are on the forward pass to adapt to
-    SDPA API.
+    SDPA API. Additionally, it inherits from `LlamaAttentionManipulationMixin` to provide attention manipulation capabilities.
+
+    The `LlamaAttentionManipulationMixin` mixin allows for the manipulation of attention weights based on custom masks,
+    enabling fine-grained control over the attention mechanism. This mixin provides a method to manipulate attention weights
+    before or after the softmax scaling of attention scores, depending on the `manipulate_attn_scores_after_scaling` flag.
     """
 
     # Adapted from LlamaAttention.forward
@@ -909,6 +934,27 @@ class LlamaModel(LlamaPreTrainedModel):
         manipulate_attn_scores_after_scaling: bool = False,
         manipulate_layers: Optional[List[int]] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
+        """
+        The forward method for the LLaMA model. This method processes the input and returns the output.
+
+        Args:
+            input_ids (torch.LongTensor, optional): The input token IDs. Defaults to None.
+            attention_mask (torch.Tensor, optional): The attention mask. Defaults to None.
+            position_ids (torch.LongTensor, optional): The position IDs. Defaults to None.
+            past_key_values (Union[Cache, List[torch.FloatTensor]], optional): The past key values. Defaults to None.
+            inputs_embeds (torch.FloatTensor, optional): The input embeddings. Defaults to None.
+            use_cache (bool, optional): Whether to use cache. Defaults to None.
+            output_attentions (bool, optional): Whether to output attentions. Defaults to None.
+            output_hidden_states (bool, optional): Whether to output hidden states. Defaults to None.
+            return_dict (bool, optional): Whether to return a dictionary. Defaults to None.
+            cache_position (torch.LongTensor, optional): The cache position. Defaults to None.
+            modified_causal_attention_mask (torch.Tensor, optional): The modified causal attention mask. Defaults to None.
+            manipulate_attn_scores_after_scaling (bool, optional): Whether to manipulate attention scores after scaling. Defaults to False.
+            manipulate_layers (List[int], optional): The layers to manipulate. Defaults to None.
+
+        Returns:
+            Union[Tuple, BaseModelOutputWithPast]: The output of the model.
+        """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -1101,11 +1147,11 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-        # Add attention manipulation params
+        # Attention manipulation parameters
         self.suppression_factors = None
         self.suppression_token_indices = None
         self.manipulate_attn_scores_after_scaling = False
-        self.layers = None  # For specifying which layers to manipulate
+        self.layers = None
 
     def get_input_embeddings(self):
         return self.model.embed_tokens
@@ -1150,6 +1196,10 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
                 Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
                 config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
                 (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
+            manipulate_attn_scores_after_scaling (`bool`, *optional*):
+                Whether to manipulate attention scores after softmax scaling. Defaults to False.
+            manipulate_layers (`List[int]`, *optional*):
+                The layers to manipulate. Defaults to None.
 
         Returns:
 
@@ -1296,6 +1346,22 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         dtype: torch.dtype,
         batch_size: int,
     ) -> torch.Tensor:
+        """
+        Generates a modified causal attention mask based on suppression token indices and factors.
+
+        This method creates a tensor of ones with shape `(batch_size, 1, 1, seq_len)` and then modifies it according to the provided suppression token indices and factors. The suppression factors are applied to the corresponding token indices in the attention mask.
+
+        Args:
+            seq_len (int): The length of the sequence.
+            suppression_token_indices (List[List[int]]): A list of lists, where each sublist contains indices of tokens to be suppressed for each batch.
+            suppression_factors (List[List[float]]): A list of lists, where each sublist contains factors to apply to the corresponding suppression token indices for each batch.
+            device (torch.device): The device on which the tensor will be stored.
+            dtype (torch.dtype): The data type of the tensor.
+            batch_size (int): The size of the batch.
+
+        Returns:
+            torch.Tensor: A tensor representing the modified causal attention mask.
+        """
         attention_mask_factors = torch.ones(
             (batch_size, 1, 1, seq_len), 
             device=device, 

@@ -62,8 +62,7 @@ class RAG:
         
         # Vector store initialization
         self.collection_name = collection_name
-        #self.vector_store = QdrantClient(host="localhost", port=6333)
-        self.vector_store = QdrantClient(":memory:")
+        self.vector_store = QdrantClient(":memory:") # Currently only in-memory; could be changed to a persistent store
         self._initialize_collection()
         
         # Embedding setup
@@ -74,15 +73,19 @@ class RAG:
         self.chunk_overlap = chunk_overlap
 
     def _initialize_collection(self) -> None:
-        """Initialize or verify Qdrant collection"""
+        """
+        Initializes or verifies the existence of a Qdrant collection for storing vector embeddings.
+        
+        This method attempts to retrieve the specified collection from the vector store. If the collection does not exist, it creates a new collection with the specified name and configuration. The configuration includes the embedding dimension size set to 384 and the distance metric set to cosine similarity.
+        """
         try:
             self.vector_store.get_collection(self.collection_name)
         except Exception:
             self.vector_store.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=VectorParams(
-                    size=384,  # Embedding dimension
-                    distance=Distance.COSINE
+                    size=384,  # Dimensionality of the embedding vectors
+                    distance=Distance.COSINE  # Distance metric for similarity calculations
                 )
             )
 
@@ -91,7 +94,15 @@ class RAG:
         return str(uuid.uuid4())
 
     def _chunk_text(self, text: str) -> List[str]:
-        """Chunk text into smaller pieces with overlap"""
+        """
+        Splits the input text into smaller chunks with overlap.
+
+        Args:
+            text (str): The input text to be chunked.
+
+        Returns:
+            List[str]: A list of chunked text strings.
+        """
         chunks = []
         start = 0
         while start < len(text):
@@ -110,7 +121,20 @@ class RAG:
         return chunks
 
     def _bing_search(self, search_term: str) -> dict:
-        """Perform Bing search using the API"""
+        """
+        Performs a Bing search using the provided search term and returns the search results as a dictionary.
+
+        This method sends a GET request to the Bing Search API with the specified search term and parameters. It requires a valid Bing subscription key to be set in the instance. The search results are returned as a JSON object.
+
+        Args:
+            search_term (str): The search term to query Bing with.
+
+        Returns:
+            dict: A dictionary containing the search results from Bing.
+
+        Raises:
+            ValueError: If the Bing subscription key is not provided.
+        """
         if not self.bing_subscription_key:
             raise ValueError("Bing subscription key not provided")
             
@@ -128,7 +152,17 @@ class RAG:
         return response.json()
 
     async def index_document(self, document: Document) -> None:
-        """Index a document into the vector store"""
+        """
+        Indexes a document into the vector store by breaking it down into chunks, embedding each chunk, and storing them with their metadata.
+
+        This method takes a document, splits its content into overlapping chunks, embeds each chunk using the embedding model, and then stores the embedded chunks along with their metadata in the vector store. The metadata includes the document ID, chunk index, source type, metadata, and timestamp.
+
+        Args:
+            document (Document): The document to be indexed.
+
+        Returns:
+            None
+        """
         chunks = self._chunk_text(document.content)
         
         for i, chunk in enumerate(chunks):
@@ -155,7 +189,17 @@ class RAG:
             )
 
     async def process_web_search(self, query: str) -> List[WebDocument]:
-        """Process web search results into documents"""
+        """
+        Processes web search results into a list of WebDocument objects.
+
+        This method takes a search query, performs a web search using the Bing API, and then converts the search results into a list of WebDocument objects. Each WebDocument object contains metadata such as the document ID, content, source type, URL, domain, title, snippet, and timestamp.
+
+        Args:
+            query (str): The search query to perform.
+
+        Returns:
+            List[WebDocument]: A list of WebDocument objects representing the search results.
+        """
         search_results = self._bing_search(query)
         documents = []
         
@@ -184,13 +228,25 @@ class RAG:
         top_k: int = 5,
         web_only: bool = False
     ) -> RAGResult:
-        """Retrieve relevant context"""
+        """
+        Retrieves relevant context based on the query, with options to limit the number of results and specify the source type.
+
+        This method retrieves the most relevant context for a given query. It can perform either a web search or a local search within the vector store, depending on the `web_only` parameter. The number of results is limited by the `top_k` parameter.
+
+        Args:
+            query (str): The search query to perform.
+            top_k (int, optional): The maximum number of results to retrieve. Defaults to 5.
+            web_only (bool, optional): If True, only perform a web search. Defaults to False.
+
+        Returns:
+            RAGResult: An object containing the retrieved contexts, their sources, and relevance scores.
+        """
         contexts = []
         sources = []
         scores = []
 
         if self.web_search_enabled and web_only:
-            # Only do web search if enabled
+            # Perform web search if enabled and web_only is True
             try:
                 web_docs = asyncio.run(self.process_web_search(query))
                 for doc in web_docs[:top_k]:
@@ -207,7 +263,7 @@ class RAG:
             except Exception as e:
                 print(f"Error in web search: {e}")
         else:
-            # Do local search only if web search is disabled
+            # Perform local search if web search is disabled or web_only is False
             query_embedding = list(self.embedding_model.embed([query]))[0]
             search_results = self.vector_store.search(
                 collection_name=self.collection_name,
@@ -238,7 +294,20 @@ class RAG:
         max_new_tokens: int = 512,
         **kwargs
     ) -> str:
-        """Generate response using context and query"""
+        """
+        Generates a response using the language model based on the provided query and optional context.
+
+        Parameters:
+        - query (str): The question or prompt to generate a response for.
+        - context (Optional[str]): Optional context to base the response on. If provided, the response will be generated using this context.
+        - seed (Optional[int]): Optional seed for the random number generator to ensure reproducibility.
+        - temperature (float): The temperature parameter for the language model to control randomness. Defaults to 0.7.
+        - max_new_tokens (int): The maximum number of tokens in the generated response. Defaults to 512.
+        - **kwargs: Additional keyword arguments to pass to the language model's generate method.
+
+        Returns:
+        - str: The generated response based on the query and context.
+        """
         if context:
             formatted_prompt = (
                 "Based on the following context, provide a clear and focused answer to the question. "

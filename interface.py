@@ -45,7 +45,9 @@ DEFAULT_SESSION_STATE = {
     "current_model": "TinyLlama-1.1B",
     "model_handler": None,
     "rag": None,
-    "selected_sources": []
+    "selected_sources": [],
+    "show_chat": True,
+    "pending_example": None
 }
 
 for key, value in DEFAULT_SESSION_STATE.items():
@@ -199,6 +201,16 @@ def create_annotated_text(text: str, highlight_chunks: List[str]) -> List[tuple]
 
 
 def create_clickable_text(text: str, chunk_mode: str = "word") -> str:
+    """
+    Generates HTML-formatted clickable text segments based on the specified chunking mode.
+    
+    Args:
+        text: The input text to be processed.
+        chunk_mode: The mode to chunk the text into clickable elements. Defaults to "word".
+    
+    Returns:
+        A string of HTML-formatted clickable text segments.
+    """
     if chunk_mode == "sentence":
         sentences = []
         current = ""
@@ -285,6 +297,7 @@ def handle_click_and_explanations(clicked_text: str, context: str, model_handler
 # Helper function to clean text
 def clean_text(text: str) -> str:
     """Remove HTML tags and clean up text"""
+    
     # Remove HTML tags
     text = re.sub(r'<[^>]+>', '', text)
     # Replace multiple spaces with single space
@@ -295,7 +308,20 @@ def clean_text(text: str) -> str:
 
 
 def perform_rag_operation(query: str, top_k: int, web_only: bool, seed: int, temperature: float, max_tokens: int) -> tuple:
-    """Perform RAG retrieval and response generation"""
+    """
+    Executes the RAG pipeline to perform web search and generate a response based on the query and retrieved context.
+
+    Parameters:
+    - query (str): The search query to perform.
+    - top_k (int): The number of top results to retrieve.
+    - web_only (bool): Flag to indicate if only web sources should be considered.
+    - seed (int): The seed for the random number generator to ensure reproducibility.
+    - temperature (float): The temperature parameter for the language model to control randomness.
+    - max_tokens (int): The maximum number of tokens in the generated response.
+
+    Returns:
+    - tuple: A tuple containing the generated response, the cleaned context text, and the sources of the context.
+    """
     print("\n=== Starting Web Search ===")
     result = st.session_state.rag.retrieve_context(
         query=query,

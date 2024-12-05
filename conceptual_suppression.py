@@ -21,35 +21,48 @@ class ConceptualSuppression():
 
 
 
-    def modify_configs(self, configs:list):
+    def modify_configs(self, configs: list) -> list:
+        """
+        Modifies the given configuration list by adding additional suppression indices and factors based on cosine similarity.
 
+        This method iterates over the input configurations, calculates the cosine similarity scores for each suppression token index, and identifies additional indices that exceed the similarity threshold. It then adjusts the suppression factors for these additional indices based on the cosine similarity and updates the configurations accordingly.
+
+        Args:
+            configs (list): A list of dictionaries, each representing a configuration for suppression. Each dictionary contains 'suppression_token_index' and 'suppression_factor' as keys.
+
+        Returns:
+            list: A modified list of configurations with additional suppression indices and factors.
+        """
         new_configs = configs.copy()
 
         for i in range(len(configs)):
             item = configs[i]
 
+            # Ensure each configuration has a single suppression token index and factor
             assert len(item['suppression_token_index']) == 1
             assert len(item['suppression_factor']) == 1
 
-            ## skip for first element where no modifications are needed
+            # Skip the first element as it does not require modifications
             if item['suppression_token_index'] == [-1]:
                 continue
 
             suppression_token_index = item['suppression_token_index'][0]
             suppression_factor = item['suppression_factor'][0]
             similarity_scores = self.similarity_matrix[suppression_token_index]
+            # Verify the dimensionality of similarity scores
             assert (
                     similarity_scores.ndim == 1
                 ), f"Expected similarity_scores.ndim to be 1 but got: {similarity_scores.ndim}"
 
+            # Identify indices with similarity scores above the threshold
             additional_indices_bool = similarity_scores >= self.similarity_threshold
             additional_indices = additional_indices_bool.nonzero().view(-1).tolist()
 
-            ## remove the index w.r.t which we calculated the scores (cossim 1) from the additional indices
+            # Remove the index of the token itself from the additional indices
             if suppression_token_index in additional_indices:
                 additional_indices.remove(suppression_token_index)
 
-            ## -1 offset because first iter is skipped because item['suppression_token_index'] == [-1] is True
+            # Calculate adjusted suppression factors for additional indices
             additional_suppression_factors = [
                 self.get_suppression_factor_from_cosine_similarity(
                     suppression_factor = suppression_factor,
@@ -57,11 +70,10 @@ class ConceptualSuppression():
                 ).item()
                 for i in range(len(additional_indices))
             ]
-            new_configs[i]['original_token_index'] = [i-1]
+            # Update the configuration with original token index, additional suppression indices, and factors
+            new_configs[i]['original_token_index'] = [i-1]  # Adjusted for 0-based indexing
             new_configs[i]['suppression_token_index'].extend(additional_indices)
-            new_configs[i]['suppression_factor'].extend(
-                additional_suppression_factors
-            )
+            new_configs[i]['suppression_factor'].extend(additional_suppression_factors)
 
         return new_configs
 

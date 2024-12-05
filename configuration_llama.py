@@ -17,7 +17,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""LLaMA model configuration"""
+
+
+"""
+Taken and modified from https://github.com/huggingface/transformers
+"""
+
 
 from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_rope_utils import rope_config_validation
@@ -173,7 +178,7 @@ class LlamaConfig(PretrainedConfig):
         rope_scaling=None,
         attention_bias=False,
         attention_dropout=0.0,
-        # Add your custom parameters here
+        # custom parameters
         manipulate_attn_scores_after_scaling=False,
         full_bf16=False,
         rotary=True,
@@ -201,7 +206,7 @@ class LlamaConfig(PretrainedConfig):
         self.rope_scaling = rope_scaling
         self.attention_bias = attention_bias
         self.attention_dropout = attention_dropout
-        # Add your custom parameters here
+        # custom parameters
         self.manipulate_attn_scores_after_scaling = manipulate_attn_scores_after_scaling
         self.full_bf16 = full_bf16
         self.rotary = rotary

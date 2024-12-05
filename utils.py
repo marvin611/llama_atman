@@ -6,7 +6,17 @@ import os
 def get_output_logits_from_input_ids(
     model,
     input_ids,  ## input_ids
- ):
+):
+    """
+    Computes the output logits from input IDs using the given model.
+
+    Args:
+        model (torch.nn.Module): The model to use for computing the output logits.
+        input_ids (torch.Tensor): The input IDs tensor.
+
+    Returns:
+        torch.Tensor: The output logits tensor.
+    """
     output = model(input_ids.to(model.device))
 
     return output.logits
@@ -15,7 +25,17 @@ def get_output_logits_from_input_ids(
 def get_output_logits_from_embeddings(
     model,
     embeddings,  ## input_ids
- ):
+):
+    """
+    Computes the output logits from embeddings using the given model.
+
+    Args:
+        model (torch.nn.Module): The model to use for computing the output logits.
+        embeddings (torch.Tensor): The embeddings tensor.
+
+    Returns:
+        torch.Tensor: The output logits tensor.
+    """
     assert embeddings.ndim == 3, f'Expected a tensor with 3 dims for embeddings, but got shape: {embeddings.shape}'
     output = model.model.forward(inputs_embeds = embeddings.to(model.device))
 
@@ -51,6 +71,16 @@ def parse_text_result(
     result, 
     target_token_index = 0, 
 ):
+    """
+    Parses explanation results for a specific target token.
+
+    Args:
+        result (list): The list of results to parse.
+        target_token_index (int, optional): The index of the target token for which to parse the result. Defaults to 0.
+
+    Returns:
+        dict: A dictionary containing the values and the target token.
+    """
     selected_result = result[target_token_index]
     explanations = selected_result["explanation"]
     target_token = selected_result['target_token_id']
